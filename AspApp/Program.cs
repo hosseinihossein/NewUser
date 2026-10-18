@@ -4,6 +4,7 @@ using AspApp.Helpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using MongoDB.Driver;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace AspApp;
 
@@ -26,6 +27,11 @@ public class Program
         {
             options.UseNpgsql(builder.Configuration["Postgres:ConnectionString:Identity"]);
         });
+        //******************* DataProtection_DbContext *******************
+        builder.Services.AddDbContext<DataProtection_DbContext>(options =>
+        {
+            options.UseNpgsql(builder.Configuration["Postgres:ConnectionString:DataProtection"]);
+        });
 
 
         //******************* Identity service *******************
@@ -47,6 +53,36 @@ public class Program
         })
         .AddEntityFrameworkStores<Identity_DbContext>()
         .AddDefaultTokenProviders();
+
+
+        //******************* identity cookie *******************
+        builder.Services.ConfigureApplicationCookie(options =>
+        {
+            options.Cookie.HttpOnly = true; // prevent from js access
+            options.Cookie.SecurePolicy = CookieSecurePolicy.Always; // https only
+            options.Cookie.SameSite = SameSiteMode.None;// no csrf protection to solve strict tracking prevention mechanisms
+
+            //Default for "Remember Me". Without "Remember Me" → Session cookie (expires when browser closes)
+            options.ExpireTimeSpan = TimeSpan.FromDays(14);
+            options.SlidingExpiration = true;
+
+            //options.LoginPath = "/Account/Login";
+            //options.AccessDeniedPath = "/Account/AccessDenied";
+        });
+
+
+        //******************* Data Protection *******************
+        // Configure shared Data Protection keys in SQL DB
+        builder.Services.AddDataProtection()
+        .PersistKeysToDbContext<DataProtection_DbContext>() // Store keys in the same DB
+        .SetApplicationName("SharedIdentityApp"); // Must match across all servers
+
+
+        //******************* SecurityStampValidatorOptions *******************
+        builder.Services.Configure<SecurityStampValidatorOptions>(options =>
+        {
+            options.ValidationInterval = TimeSpan.Zero;
+        });
 
 
         // ************ MongoDb ***********
@@ -106,6 +142,11 @@ public class Program
 
 
         // *************** map controllers and actions ***************
+        app.UseRouting();
+
+        app.UseAuthentication();
+        app.UseAuthorization();
+
         app.MapControllers();
         app.MapDefaultControllerRoute();
 

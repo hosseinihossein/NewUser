@@ -1,6 +1,8 @@
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using AspApp.Helpers;
 using Confluent.Kafka;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
@@ -9,23 +11,25 @@ using MongoDB.Driver;
 namespace AspApp.Controllers;
 
 [ApiController]
-[Route("Api/[controller]/[action]")]
+[Route("api/[controller]/[action]")]
 public class NewUserController : ControllerBase
 {
     private readonly ILogger<NewUserController> _logger;
     private readonly KafkaEmailSender _emailSender;
     private readonly UserManager<IdentityUser<Guid>> _userManager;
     private readonly IMongoCollection<BsonDocument> _userProfileCollection;
+    //private readonly SignInManager<IdentityUser<Guid>> _signInManager;
 
 
     public NewUserController(IMongoDatabase mongoUserDb, ILogger<NewUserController> logger,
     KafkaEmailSender emailSender, UserManager<IdentityUser<Guid>> userManager,
-    IConfiguration configuration)
+    IConfiguration configuration)//, SignInManager<IdentityUser<Guid>> signInManager)
     {
         _logger = logger;
         _emailSender = emailSender;
         _userManager = userManager;
         _userProfileCollection = mongoUserDb.GetCollection<BsonDocument>(configuration["MongoDB:ProfileCollectionName"] ?? "Profile");
+        //_signInManager = signInManager;
     }
 
     /*public IActionResult TestProducer()
@@ -49,7 +53,8 @@ public class NewUserController : ControllerBase
 
     [HttpPost]
     public async Task<IActionResult> Signup([FromBody] Identity_SignupFormModel signupModel,
-    [FromServices] TurnstileService turnstileService)
+    [FromServices] TurnstileService turnstileService,
+    [FromServices] SignInManager<IdentityUser<Guid>> signInManager)
     {
         if (ModelState.IsValid)
         {
@@ -94,7 +99,9 @@ public class NewUserController : ControllerBase
                 string userLogJson = JsonSerializer.Serialize(userLog);
                 _logger.LogInformation(userLogJson);
 
-                return Ok(new { success = true });
+                await signInManager.SignInAsync(user, true);
+
+                return Redirect("~/UserSettings");
             }
 
             foreach (IdentityError error in result.Errors)
@@ -127,6 +134,123 @@ public class NewUserController : ControllerBase
         };
 
         _emailSender.Send(emailModel);
+    }
+
+
+    [HttpGet]
+    [Authorize]
+    public async Task<IActionResult> ConfirmEmail([FromQuery] string token,
+    [FromQuery][StringLength(128)] string email)
+    {
+        if (ModelState.IsValid)
+        {
+            IdentityUser<Guid>? user = await _userManager.FindByEmailAsync(email);
+            if (user is null)
+            {
+                //return error to warning page about user not found
+                return Redirect("~/Warning?status=danger&msg=User Not found!");
+            }
+
+            if (user.EmailConfirmed)
+            {
+                //return info to warning page about user already been confirmed
+                return Redirect("~/Warning?status=danger&msg=Your Email has already been confirmed!");
+            }
+
+            IdentityResult result = await _userManager.ConfirmEmailAsync(user, token);
+            if (result.Succeeded)
+            {
+                //return Redirect("~/UserProfile");
+
+                // force the user to authorize again to refresh the oidc tokens
+                return Redirect("~/Api/Authorization/Logout");
+            }
+
+            //Confirmation not succeeded
+            //return Redirect("~/Warning?status=danger&msg=Your email validation link Is Incorrect or Expired!");
+
+            foreach (var error in result.Errors)
+            {
+                ModelState.AddModelError("ConfirmEmail", error.Description);
+            }
+        }
+
+        //BadRequest
+        return BadRequest(ModelState);
+        //return Redirect("~/Warning?status=danger&msg=Bad Request!");
+    }
+
+
+    [HttpGet]
+    [Authorize]
+    public async Task<IActionResult> ConfirmNewEmail([FromQuery] string token,
+    [FromQuery][StringLength(128)] string newEmail)
+    {
+        if (ModelState.IsValid)
+        {
+            IdentityUser<Guid>? user = await _userManager.GetUserAsync(User);
+            if (user is null)
+            {
+                //return error to warning page about user not found
+                return Redirect("~/Warning?status=danger&msg=User Not found!");
+            }
+
+            if (user.Email == newEmail)
+            {
+                //return info to warning page about user already been confirmed
+                return Redirect("~/Warning?status=danger&msg=Your Email has already been confirmed!");
+            }
+
+            IdentityResult result = await _userManager.ChangeEmailAsync(user, newEmail, token);
+            if (result.Succeeded)
+            {
+                //return Redirect("~/UserProfile");
+
+                // force the user to authorize again to refresh the oidc tokens
+                return Redirect("~/Api/Authorization/Logout");
+            }
+
+            //Confirmation not succeeded
+            //return Redirect("~/Warning?status=danger&msg=Your email validation link Is Incorrect or Expired!");
+
+            foreach (var error in result.Errors)
+            {
+                ModelState.AddModelError("ConfirmNewEmail", error.Description);
+            }
+        }
+
+        //BadRequest
+        return BadRequest(ModelState);
+        //return Redirect("~/Warning?status=danger&msg=Bad Request!");
+    }
+
+
+    [HttpPost]
+    [Authorize]
+    public async Task<IActionResult> SubmitResetPassword(Identity_ResetPasswordFormModel formModel)
+    {
+        if (ModelState.IsValid)
+        {
+            IdentityUser<Guid>? user = await _userManager.GetUserAsync(User);
+            if (user is null)
+            {
+                return Redirect("~/Warning?status=danger&msg=User Not found!");
+            }
+
+            var result =
+            await _userManager.ResetPasswordAsync(user, formModel.Token, formModel.NewPassword);
+            if (result.Succeeded)
+            {
+                // force the user to authorize again to refresh the oidc tokens
+                return Redirect("~/Api/Authorization/Logout");
+            }
+
+            foreach (var error in result.Errors)
+            {
+                ModelState.AddModelError("SubmitResetPassword", error.Description);
+            }
+        }
+        return BadRequest(ModelState);
     }
 
 }
