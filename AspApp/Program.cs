@@ -1,6 +1,9 @@
 using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using AspApp.Helpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
+using MongoDB.Driver;
 
 namespace AspApp;
 
@@ -18,6 +21,44 @@ public class Program
         });
 
 
+        //******************* Identity_DbContext *******************
+        builder.Services.AddDbContext<Identity_DbContext>(options =>
+        {
+            options.UseNpgsql(builder.Configuration["Postgres:ConnectionString:Identity"]);
+        });
+
+
+        //******************* Identity service *******************
+        builder.Services.AddIdentity<IdentityUser<Guid>, IdentityRole<Guid>>(options =>
+        {
+            options.User.AllowedUserNameCharacters =
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._";
+
+            options.User.RequireUniqueEmail = true;
+
+            options.SignIn.RequireConfirmedEmail = false;
+
+            options.Password.RequireDigit = false;
+            options.Password.RequiredLength = 8;
+            options.Password.RequireLowercase = false;
+            options.Password.RequireUppercase = false;
+            options.Password.RequireNonAlphanumeric = false;
+            options.Password.RequiredUniqueChars = 1;
+        })
+        .AddEntityFrameworkStores<Identity_DbContext>()
+        .AddDefaultTokenProviders();
+
+
+        // ************ MongoDb ***********
+        // Register IMongoClient as a Singleton
+        IMongoClient mongoClient = new MongoClient(builder.Configuration["MongoDb:ConnectionString"]);
+        builder.Services.AddSingleton<IMongoClient>(mongoClient);
+        // Register IMongoDatabase directly as a Singleton for quick access
+        IMongoDatabase userDb = mongoClient.GetDatabase(builder.Configuration["MongoDb:UserDbName"]);
+        builder.Services.AddSingleton<IMongoDatabase>(userDb);
+
+
+        //******************* ControllersWithViews *******************
         builder.Services.AddControllersWithViews();
 
 
@@ -32,11 +73,9 @@ public class Program
         //******************* IHttpClientFactory *******************
         builder.Services.AddHttpClient();
 
+
         //**************************** Custom Services **************************
-        if (builder.Configuration.GetValue<bool>("TurnsTileEnable"))
-        {
-            builder.Services.AddSingleton<TurnstileService>();
-        }
+        builder.Services.AddSingleton<TurnstileService>();
 
 
         //**************************** Kafka Producer **************************
@@ -44,15 +83,21 @@ public class Program
         builder.Services.AddSingleton<KafkaProducerService>(kafkaService);
 
 
-        //**************************** Kafka Logger **************************
+        //**************************** Logger **************************
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole(); // Keep Console for local visibility
         builder.Logging.AddKafka(kafkaService, builder.Configuration);
 
 
+        //**************************** Email Sender **************************
+        builder.Services.AddSingleton<KafkaEmailSender>();
+
+
+        //************************* app **********************
         var app = builder.Build();
 
 
+        // ************************* forward headers **********************
         app.UseForwardedHeaders(new ForwardedHeadersOptions
         {
             ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
@@ -60,10 +105,11 @@ public class Program
         });
 
 
+        // *************** map controllers and actions ***************
         app.MapControllers();
         app.MapDefaultControllerRoute();
 
-        
+
         //******************* app.Run ******************
         Console.WriteLine($"\n*** App is running on all networks port '80'");
         app.Run();
