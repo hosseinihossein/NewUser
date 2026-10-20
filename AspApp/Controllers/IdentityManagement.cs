@@ -1,5 +1,5 @@
 using System.ComponentModel.DataAnnotations;
-using System.Text.Json;
+//using System.Text.Json;
 using AspApp.Helpers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -11,21 +11,21 @@ using MongoDB.Driver;
 namespace AspApp.Controllers;
 
 [ApiController]
-[Route("api/[controller]/[action]")]
-public class NewUserController : ControllerBase
+[Route("api/identity/[controller]/[action]")]
+public class ManagementController : ControllerBase
 {
-    private readonly ILogger<NewUserController> _logger;
+    //private readonly ILogger<ManagementController> _logger;
     private readonly KafkaEmailSender _emailSender;
     private readonly UserManager<IdentityUser<Guid>> _userManager;
     private readonly IMongoCollection<BsonDocument> _userProfileCollection;
 
 
 
-    public NewUserController(IMongoDatabase mongoUserDb, ILogger<NewUserController> logger,
+    public ManagementController(IMongoDatabase mongoUserDb, //ILogger<ManagementController> logger,
     KafkaEmailSender emailSender, UserManager<IdentityUser<Guid>> userManager,
     IConfiguration configuration)
     {
-        _logger = logger;
+        //_logger = logger;
         _emailSender = emailSender;
         _userManager = userManager;
         _userProfileCollection = mongoUserDb.GetCollection<BsonDocument>(configuration["MongoDB:ProfileCollectionName"] ?? "Profile");

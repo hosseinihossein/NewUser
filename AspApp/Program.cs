@@ -5,8 +5,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using MongoDB.Driver;
 using Microsoft.AspNetCore.DataProtection;
-using System.Diagnostics.Eventing.Reader;
-using Microsoft.AspNetCore.Session;
 
 namespace AspApp;
 
