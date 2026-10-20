@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using MongoDB.Driver;
 using Microsoft.AspNetCore.DataProtection;
+using System.Diagnostics.Eventing.Reader;
+using Microsoft.AspNetCore.Session;
 
 namespace AspApp;
 
@@ -60,13 +62,14 @@ public class Program
         {
             options.Cookie.HttpOnly = true; // prevent from js access
             options.Cookie.SecurePolicy = CookieSecurePolicy.Always; // https only
-            options.Cookie.SameSite = SameSiteMode.None;// no csrf protection to solve strict tracking prevention mechanisms
+            options.Cookie.SameSite = SameSiteMode.Lax;// protect unsafe methods from csrf
+            options.Cookie.Path = "/api/identity/";
 
             //Default for "Remember Me". Without "Remember Me" → Session cookie (expires when browser closes)
-            options.ExpireTimeSpan = TimeSpan.FromDays(14);
-            options.SlidingExpiration = true;
+            options.ExpireTimeSpan = TimeSpan.FromDays(14);//null or don't set for session lifetime
+            options.SlidingExpiration = true;//Reset expiration when user interacts halfway through the lifespan
 
-            //options.LoginPath = "/Account/Login";
+            options.LoginPath = "/Authentication";
             //options.AccessDeniedPath = "/Account/AccessDenied";
         });
 
@@ -95,7 +98,7 @@ public class Program
 
 
         //******************* ControllersWithViews *******************
-        builder.Services.AddControllersWithViews();
+        builder.Services.AddControllers();
 
 
         //******************* AntiForgery *******************
@@ -110,7 +113,7 @@ public class Program
         builder.Services.AddHttpClient();
 
 
-        //**************************** Custom Services **************************
+        //**************************** Turnstile **************************
         builder.Services.AddSingleton<TurnstileService>();
 
 

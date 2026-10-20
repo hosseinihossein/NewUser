@@ -4,6 +4,7 @@ using AspApp.Helpers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
@@ -47,21 +48,10 @@ public class NewUserController : ControllerBase
     [ValidateTurnstile]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Signup([FromBody] Identity_SignupFormModel signupModel,
-    //[FromServices] TurnstileService turnstileService,
     [FromServices] SignInManager<IdentityUser<Guid>> signInManager)
     {
         if (ModelState.IsValid)
         {
-            /*TurnstileResponse? turnstileResponse =
-            await turnstileService.ValidateTokenAsync(HttpContext, signupModel.CfTurnstileResponse);
-
-            if (turnstileResponse is null || turnstileResponse.Success is false)
-            {
-                ModelState.AddModelError("TurnstileError",
-                turnstileResponse is null ? "response null!" : string.Join(", ", turnstileResponse.ErrorCodes));
-                return BadRequest(ModelState);
-            }*/
-
             IdentityUser<Guid> user = new IdentityUser<Guid>()
             {
                 UserName = signupModel.Username,
@@ -82,18 +72,18 @@ public class NewUserController : ControllerBase
                 };
                 await _userProfileCollection.InsertOneAsync(bsonDoc);
 
-                //submit a log
-                var userLog = new
+                /*/submit a log
+                var logObj = new
                 {
                     Action = nameof(Signup),
                     user.Id,
                     user.UserName,
                     user.Email,
                 };
-                string userLogJson = JsonSerializer.Serialize(userLog);
-                _logger.LogInformation(userLogJson);
+                string logJson = JsonSerializer.Serialize(logObj);
+                _logger.LogInformation(logJson);*/
 
-                await signInManager.SignInAsync(user, true);
+                await signInManager.SignInAsync(user, false);
 
                 return Redirect("~/UserSettings");
             }
@@ -109,6 +99,15 @@ public class NewUserController : ControllerBase
 
 
     // **********    Email    **********
+    [HttpGet]
+    public async Task<IActionResult> CheckEmail([FromQuery][StringLength(128, MinimumLength = 3)] string email)
+    {
+        bool userExist = await _userManager.Users
+        .AnyAsync(u => u.NormalizedEmail == _userManager.NormalizeEmail(email));
+
+        return Ok(new { isTaken = userExist });
+    }
+
     private async Task SendEmailValidationLink(IdentityUser<Guid> user)
     {
         //***** Generate Email Validation Token *****
@@ -117,7 +116,7 @@ public class NewUserController : ControllerBase
         //***** Sending Email *****
         string emailMessage = $"<h4>Hi dear {user.UserName}</h4>" +
         "<p>Please click " +
-        $"<a href='https://localhost:5443/Identity/ConfirmEmail?token={token}&email={user.Email}' " +
+        $"<a href='https://localhost:5443/Identity/ConfirmEmail?token={Uri.EscapeDataString(token)}&email={Uri.EscapeDataString(user.Email!)}' " +
         "target='_blank'>'Here'</a>" +
         " to confirm your email.</p>";
 
@@ -130,6 +129,35 @@ public class NewUserController : ControllerBase
         };
 
         _emailSender.Send(emailModel);
+    }
+
+    [HttpPost]
+    [ValidateTurnstile]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> ResendEmailValidation(
+    [FromBody] Identity_EmailValidationFormModel emailModel)
+    {
+        if (ModelState.IsValid)
+        {
+            IdentityUser<Guid>? user = await _userManager.FindByEmailAsync(emailModel.Email);
+            if (user is not null)
+            {
+                await SendEmailValidationLink(user);
+
+                /*/submit a log
+                var logObj = new
+                {
+                    Action = nameof(ResendEmailValidation),
+                    user.Id,
+                };
+                string logJson = JsonSerializer.Serialize(logObj);
+                _logger.LogInformation(logJson);*/
+
+                return Ok(new { success = true });
+            }
+            ModelState.AddModelError("Email", "User Not found!");
+        }
+        return BadRequest(ModelState);
     }
 
     [HttpGet]
@@ -155,8 +183,17 @@ public class NewUserController : ControllerBase
             IdentityResult result = await _userManager.ConfirmEmailAsync(user, token);
             if (result.Succeeded)
             {
-                //return Redirect("~/UserProfile");
+                /*/submit a log
+                var logObj = new
+                {
+                    Action = nameof(ConfirmEmail),
+                    user.Id,
+                    user.Email,
+                };
+                string logJson = JsonSerializer.Serialize(logObj);
+                _logger.LogInformation(logJson);*/
 
+                //return Redirect("~/UserProfile");
                 // force the user to authorize again to refresh the oidc tokens
                 return Redirect("/angular/logout/page/route");//that handles request to ~/Api/Authorization/Logout
             }
@@ -197,6 +234,7 @@ public class NewUserController : ControllerBase
             else
             {
                 await SendNewEmailValidationLink(user, newEmail);
+
                 return Ok(new { success = true });
             }
 
@@ -212,7 +250,7 @@ public class NewUserController : ControllerBase
         //***** Sending Email *****
         string emailMessage = $"<h4>Hi dear {user.UserName}</h4>" +
         "<p>Please click " +
-        $"<a href='https://localhost:5443/Identity/ConfirmEmail?token={token}&email={user.Email}' " +
+        $"<a href='https://localhost:5443/Identity/ConfirmEmail?token={Uri.EscapeDataString(token)}&email={Uri.EscapeDataString(user.Email!)}' " +
         "target='_blank'>'Here'</a>" +
         " to confirm your new email.</p>";
 
@@ -376,7 +414,41 @@ public class NewUserController : ControllerBase
 
 
     // **********    UserName    **********
+    [HttpGet]
+    public async Task<IActionResult> CheckUsername([FromQuery][StringLength(60, MinimumLength = 3)] string username)
+    {
+        bool userExist = await _userManager.Users
+        .AnyAsync(u => u.NormalizedUserName == _userManager.NormalizeName(username));
 
+        return Ok(new { isTaken = userExist });
+    }
+
+    [HttpPost]
+    [Authorize]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> SubmitUsername([FromQuery][StringLength(60, MinimumLength = 3)] string username)
+    {
+        if (ModelState.IsValid)
+        {
+            IdentityUser<Guid>? user = await _userManager.GetUserAsync(User);
+            if (user is null)
+            {
+                ModelState.AddModelError("User", "User Not Found! You need to authenticate.");
+                return BadRequest(ModelState);
+            }
+
+            var result = await _userManager.SetUserNameAsync(user, username);
+            if (result.Succeeded)
+            {
+                return Ok(new { success = true });
+            }
+            foreach (var error in result.Errors)
+            {
+                ModelState.AddModelError("Username", error.Description);
+            }
+        }
+        return BadRequest(ModelState);
+    }
 
 
 }

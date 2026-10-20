@@ -58,3 +58,14 @@ public class Identity_ResetPasswordFormModel
     [EmailAddress]
     public string Email { get; set; } = string.Empty;
 }
+
+public class Identity_EmailValidationFormModel
+{
+
+    [StringLength(60)]
+    [EmailAddress]
+    public string Email { get; set; } = string.Empty;
+
+    [StringLength(2048)]
+    public string? CfTurnstileResponse { get; set; } = string.Empty;
+}
