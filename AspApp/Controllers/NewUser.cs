@@ -1,7 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using AspApp.Helpers;
-using Confluent.Kafka;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -18,47 +17,42 @@ public class NewUserController : ControllerBase
     private readonly KafkaEmailSender _emailSender;
     private readonly UserManager<IdentityUser<Guid>> _userManager;
     private readonly IMongoCollection<BsonDocument> _userProfileCollection;
-    //private readonly SignInManager<IdentityUser<Guid>> _signInManager;
+
 
 
     public NewUserController(IMongoDatabase mongoUserDb, ILogger<NewUserController> logger,
     KafkaEmailSender emailSender, UserManager<IdentityUser<Guid>> userManager,
-    IConfiguration configuration)//, SignInManager<IdentityUser<Guid>> signInManager)
+    IConfiguration configuration)
     {
         _logger = logger;
         _emailSender = emailSender;
         _userManager = userManager;
         _userProfileCollection = mongoUserDb.GetCollection<BsonDocument>(configuration["MongoDB:ProfileCollectionName"] ?? "Profile");
-        //_signInManager = signInManager;
     }
 
-    /*public IActionResult TestProducer()
+
+
+    // **********    AntiForgery    **********
+    [HttpGet]
+    [GenerateAntiforgeryTokenCookie]
+    public IActionResult GetAntiForgery()
     {
-        int ranNum = new Random().Next(100);
-        var messageObject = new
-        {
-            Name = $"Name{ranNum}",
-            Source = $"Source{ranNum}",
-            Type = $"Type{ranNum}",
-            Description = $"This is a fake message with random number {ranNum} for testing kafka",
-            RandonNumber = ranNum,
-        };
-        string messageJson = JsonSerializer.Serialize(messageObject);
-
-        _logger.LogInformation(messageJson);
-
-        return Ok(messageJson);
-    }*/
+        return Ok();
+    }
 
 
+
+    // **********    Signup    **********
     [HttpPost]
+    [ValidateTurnstile]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> Signup([FromBody] Identity_SignupFormModel signupModel,
-    [FromServices] TurnstileService turnstileService,
+    //[FromServices] TurnstileService turnstileService,
     [FromServices] SignInManager<IdentityUser<Guid>> signInManager)
     {
         if (ModelState.IsValid)
         {
-            TurnstileResponse? turnstileResponse =
+            /*TurnstileResponse? turnstileResponse =
             await turnstileService.ValidateTokenAsync(HttpContext, signupModel.CfTurnstileResponse);
 
             if (turnstileResponse is null || turnstileResponse.Success is false)
@@ -66,7 +60,7 @@ public class NewUserController : ControllerBase
                 ModelState.AddModelError("TurnstileError",
                 turnstileResponse is null ? "response null!" : string.Join(", ", turnstileResponse.ErrorCodes));
                 return BadRequest(ModelState);
-            }
+            }*/
 
             IdentityUser<Guid> user = new IdentityUser<Guid>()
             {
@@ -113,6 +107,8 @@ public class NewUserController : ControllerBase
     }
 
 
+
+    // **********    Email    **********
     private async Task SendEmailValidationLink(IdentityUser<Guid> user)
     {
         //***** Generate Email Validation Token *****
@@ -135,7 +131,6 @@ public class NewUserController : ControllerBase
 
         _emailSender.Send(emailModel);
     }
-
 
     [HttpGet]
     [Authorize]
@@ -163,7 +158,7 @@ public class NewUserController : ControllerBase
                 //return Redirect("~/UserProfile");
 
                 // force the user to authorize again to refresh the oidc tokens
-                return Redirect("~/Api/Authorization/Logout");
+                return Redirect("/angular/logout/page/route");//that handles request to ~/Api/Authorization/Logout
             }
 
             //Confirmation not succeeded
@@ -180,6 +175,57 @@ public class NewUserController : ControllerBase
         //return Redirect("~/Warning?status=danger&msg=Bad Request!");
     }
 
+    [HttpPost]
+    [Authorize]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> ChangeEmail([FromQuery][StringLength(128)] string newEmail)
+    {
+        if (ModelState.IsValid)
+        {
+            IdentityUser<Guid>? user = await _userManager.GetUserAsync(User);
+            if (user is null)
+            {
+                //return Redirect("~/Warning?status=danger&msg=User Not found!");
+                ModelState.AddModelError("User", "User Not Found! You need to authenticate.");
+                return BadRequest(ModelState);
+            }
+
+            if (user.Email == newEmail)
+            {
+                ModelState.AddModelError("Email", "The current and new email addresses are the same!");
+            }
+            else
+            {
+                await SendNewEmailValidationLink(user, newEmail);
+                return Ok(new { success = true });
+            }
+
+        }
+        return BadRequest(ModelState);
+    }
+
+    private async Task SendNewEmailValidationLink(IdentityUser<Guid> user, string newEmail)
+    {
+        //***** Generate Email Validation Token *****
+        string token = await _userManager.GenerateChangeEmailTokenAsync(user, newEmail);
+
+        //***** Sending Email *****
+        string emailMessage = $"<h4>Hi dear {user.UserName}</h4>" +
+        "<p>Please click " +
+        $"<a href='https://localhost:5443/Identity/ConfirmEmail?token={token}&email={user.Email}' " +
+        "target='_blank'>'Here'</a>" +
+        " to confirm your new email.</p>";
+
+        EmailModel emailModel = new()
+        {
+            Message = emailMessage,
+            ReceiverEmail = newEmail,
+            ReceiverName = user.UserName,
+            Subject = "New Email Validation"
+        };
+
+        _emailSender.Send(emailModel);
+    }
 
     [HttpGet]
     [Authorize]
@@ -207,7 +253,7 @@ public class NewUserController : ControllerBase
                 //return Redirect("~/UserProfile");
 
                 // force the user to authorize again to refresh the oidc tokens
-                return Redirect("~/Api/Authorization/Logout");
+                return Redirect("/angular/logout/page/route");//that handles request to ~/Api/Authorization/Logout
             }
 
             //Confirmation not succeeded
@@ -225,24 +271,68 @@ public class NewUserController : ControllerBase
     }
 
 
+
+    // **********    Password    **********
     [HttpPost]
-    [Authorize]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> ForgetPassword([FromQuery][StringLength(128)] string email)
+    {
+        if (ModelState.IsValid)
+        {
+            IdentityUser<Guid>? user = await _userManager.FindByEmailAsync(email);
+            if (user is not null)
+            {
+                await SendResetPasswordLink(user);
+
+                return Ok(new { success = true });
+            }
+            ModelState.AddModelError("Email", "Email Not found!");
+
+        }
+        return BadRequest(ModelState);
+    }
+
+    private async Task SendResetPasswordLink(IdentityUser<Guid> user)
+    {
+        //***** Generate Email Validation Token *****
+        string token = await _userManager.GeneratePasswordResetTokenAsync(user);
+
+        //***** Sending Email *****
+        string emailMessage = $"<h4>Hi dear {user.UserName}</h4>" +
+        "<p>Please click " +
+        $"<a href='https://localhost:5443/Identity/ResetPassword?token={Uri.EscapeDataString(token)}&email={Uri.EscapeDataString(user.Email!)}' " +
+        "target='_blank'>'Here'</a>" +
+        " to proceed resetting your password.</p>";
+
+        EmailModel emailModel = new()
+        {
+            Message = emailMessage,
+            ReceiverEmail = user.Email!,
+            ReceiverName = user.UserName,
+            Subject = "Reset Password"
+        };
+
+        _emailSender.Send(emailModel);
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> SubmitResetPassword(Identity_ResetPasswordFormModel formModel)
     {
         if (ModelState.IsValid)
         {
-            IdentityUser<Guid>? user = await _userManager.GetUserAsync(User);
+            IdentityUser<Guid>? user = await _userManager.FindByEmailAsync(formModel.Email);
             if (user is null)
             {
-                return Redirect("~/Warning?status=danger&msg=User Not found!");
+                ModelState.AddModelError("User", "User Not Found! Email is invalid!");
+                return BadRequest(ModelState);
             }
 
             var result =
             await _userManager.ResetPasswordAsync(user, formModel.Token, formModel.NewPassword);
             if (result.Succeeded)
             {
-                // force the user to authorize again to refresh the oidc tokens
-                return Redirect("~/Api/Authorization/Logout");
+                return Ok(new { success = true });
             }
 
             foreach (var error in result.Errors)
@@ -252,5 +342,41 @@ public class NewUserController : ControllerBase
         }
         return BadRequest(ModelState);
     }
+
+    [HttpPost]
+    [Authorize]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> SubmitChangePassword(Identity_ChangePasswordFormModel formModel)
+    {
+        if (ModelState.IsValid)
+        {
+            IdentityUser<Guid>? user = await _userManager.GetUserAsync(User);
+            if (user is null)
+            {
+                ModelState.AddModelError("User", "User Not Found! You need to authenticate.");
+                return BadRequest(ModelState);
+            }
+
+            var result =
+            await _userManager.ChangePasswordAsync(user, formModel.CurrentPassword, formModel.NewPassword);
+            if (result.Succeeded)
+            {
+                // force the user to authorize again to refresh the oidc tokens
+                return Redirect("/angular/logout/page/route");//that handles request to ~/Api/Authorization/Logout
+            }
+
+            foreach (var error in result.Errors)
+            {
+                ModelState.AddModelError("SubmitResetPassword", error.Description);
+            }
+        }
+        return BadRequest(ModelState);
+    }
+
+
+
+    // **********    UserName    **********
+
+
 
 }

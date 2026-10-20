@@ -45,22 +45,16 @@ public class Identity_ChangePasswordFormModel
 
     [StringLength(60, MinimumLength = 8)]
     public string NewPassword { get; set; } = string.Empty;
-
-    /*[StringLength(60, MinimumLength = 8)]
-    [Compare(nameof(NewPassword))]
-    public string RepeatNewPassword { get; set; } = string.Empty;*/
 }
 
 public class Identity_ResetPasswordFormModel
 {
-    //public Guid UserGuid { get; set; }
-
     public string Token { get; set; } = string.Empty;
 
     [StringLength(60, MinimumLength = 8)]
     public string NewPassword { get; set; } = string.Empty;
 
-    /*[StringLength(60, MinimumLength = 8)]
-    [Compare(nameof(NewPassword))]
-    public string RepeatNewPassword { get; set; } = string.Empty;*/
+    [StringLength(128, MinimumLength = 8)]
+    [EmailAddress]
+    public string Email { get; set; } = string.Empty;
 }
